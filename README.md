@@ -2,6 +2,10 @@
 [![crates.io](https://img.shields.io/crates/v/synopsys-usb-otg.svg)](https://crates.io/crates/synopsys-usb-otg)
 [![Build Status](https://github.com/stm32-rs/synopsys-usb-otg/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/stm32-rs/synopsys-usb-otg/actions/workflows/ci.yml)
 
+# this is a workaround package to allow GD32VFxxx and GD32C1x3 devices to have functional USB 
+
+and will be deprecated once the upstream [merges the relevant PR.](https://github.com/stm32-rs/synopsys-usb-otg/pull/25)
+
 # `synopsys-usb-otg`
 
 > [usb-device](https://github.com/mvirkkunen/usb-device) implementation for Synopsys USB OTG IP cores.
