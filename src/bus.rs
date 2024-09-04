@@ -58,12 +58,18 @@ impl<USB: UsbPeripheral> UsbBus<USB> {
         let fifo_size = self.allocator.memory_allocator.tx_fifo_size_words(0);
 
         #[cfg(feature = "fs")]
-        write_reg!(otg_global, regs.global(), DIEPTXF0,
+        write_reg!(
+            otg_global,
+            regs.global(),
+            DIEPTXF0,
             TX0FD: fifo_size as u32,
             TX0FSA: fifo_top as u32
         );
         #[cfg(feature = "hs")]
-        write_reg!(otg_global, regs.global(), GNPTXFSIZ,
+        write_reg!(
+            otg_global,
+            regs.global(),
+            GNPTXFSIZ,
             TX0FD: fifo_size as u32,
             TX0FSA: fifo_top as u32
         );
@@ -75,7 +81,10 @@ impl<USB: UsbPeripheral> UsbBus<USB> {
             let fifo_size = self.allocator.memory_allocator.tx_fifo_size_words(i);
 
             let dieptxfx = regs.dieptxfx(i);
-            write_reg!(otg_global_dieptxfx, dieptxfx, DIEPTXFx,
+            write_reg!(
+                otg_global_dieptxfx,
+                dieptxfx,
+                DIEPTXFx,
                 INEPTXFD: fifo_size as u32,
                 INEPTXSA: fifo_top as u32
             );
@@ -503,7 +512,8 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             write_reg!(otg_global, regs.global(), GINTMSK,
                 USBRST: 1, ENUMDNEM: 1,
                 USBSUSPM: 1, WUIM: 1,
-                IEPINT: 1, RXFLVLM: 1
+                IEPINT: 1, RXFLVLM: 1,
+                IISOIXFRM: 1
             );
 
             // clear pending interrupts
@@ -590,7 +600,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
 
             let core_id = read_reg!(otg_global, regs.global(), CID);
 
-            let (wakeup, suspend, enum_done, reset, iep, rxflvl) = read_reg!(
+            let (wakeup, suspend, enum_done, reset, iep, rxflvl, iisoixfr) = read_reg!(
                 otg_global,
                 regs.global(),
                 GINTSTS,
@@ -599,7 +609,8 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 ENUMDNE,
                 USBRST,
                 IEPINT,
-                RXFLVL
+                RXFLVL,
+                IISOIXFR
             );
 
             if reset != 0 {
@@ -618,7 +629,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 let speed = read_reg!(otg_device, regs.device(), DSTS, ENUMSPD);
 
                 // Compute and update TRDT
-                let trdt;
+                let mut trdt = 0;
                 match speed {
                     0b00 => {
                         // High speed
@@ -633,6 +644,10 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                     0b01 | 0b11 => {
                         // Full speed
 
+                        #[cfg(feature = "esp32sx")]
+                        trdt = 0x05;
+
+                        #[cfg(not(feature = "esp32sx"))]
                         if core_id == 0x0000_1000 {
                             // From GD32VF103_Firmware_Library_V1.0.2.rar.
                             trdt = 0x05;
@@ -667,6 +682,66 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 write_reg!(otg_global, regs.global(), GINTSTS, USBSUSP: 1);
 
                 PollResult::Suspend
+            } else if iisoixfr != 0 {
+                use crate::ral::endpoint_in;
+
+                // Incomplete isochronous IN transfer; see
+                // RM0383 Rev 3 pp797 "Incomplete isochronous IN data transfers"
+                write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
+
+                let in_endpoints = self
+                    .allocator
+                    .endpoints_in
+                    .iter()
+                    .flatten()
+                    .map(|ep| ep.address().index());
+
+                let mut iep: u16 = 0;
+
+                for epnum in in_endpoints {
+                    let ep_regs = regs.endpoint_in(epnum);
+
+                    // Filter out non-isochronous endpoints
+                    if read_reg!(endpoint_in, ep_regs, DIEPCTL, EPTYP) & 0x11 != 0x01 {
+                        continue;
+                    }
+
+                    // RM0383 states that the NAK bit in DIEPINT is set when a
+                    // zero length packet is transmitted due to unavailability
+                    // of data in the Tx FIFO.
+                    // However, this bit is not defined in the RAL and
+                    // by checking several STM32 RMs, it's even unclear
+                    // if it actually exists on OTG_FS peripherals.
+                    // While testing with macOS, the bit was never set.
+                    // Therefore, an alternative method is used to check if
+                    // an endpoint is affected.
+                    // TODO: investigate if this check works correctly and
+                    // does not affect other isochronous IN endpoints by mistake.
+                    if read_reg!(endpoint_in, ep_regs, DIEPCTL, NAKSTS) == 1 {
+                        continue;
+                    }
+
+                    // Set NAK
+                    modify_reg!(endpoint_in, ep_regs, DIEPCTL, SNAK: 1);
+                    while read_reg!(endpoint_in, ep_regs, DIEPINT, INEPNE) == 0 {}
+
+                    // Disable the endpoint
+                    modify_reg!(endpoint_in, ep_regs, DIEPCTL, SNAK: 1, EPDIS: 1);
+                    while read_reg!(endpoint_in, ep_regs, DIEPINT, EPDISD) == 0 {}
+                    modify_reg!(endpoint_in, ep_regs, DIEPINT, EPDISD: 1);
+
+                    // Flush the TX FIFO
+                    modify_reg!(otg_global, regs.global(), GRSTCTL, TXFNUM: epnum as u32, TXFFLSH: 1);
+                    while read_reg!(otg_global, regs.global(), GRSTCTL, TXFFLSH) == 1 {}
+
+                    iep |= 1 << epnum;
+                }
+
+                PollResult::Data {
+                    ep_out: 0,
+                    ep_in_complete: iep,
+                    ep_setup: 0,
+                }
             } else {
                 let mut ep_out = 0;
                 let mut ep_in_complete = 0;
@@ -713,9 +788,10 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                             }
 
                             // Re-enable the endpoint, F429-like chips only
-                            if core_id == 0x0000_1000
+                            if core_id == 0x4f54_400a
                                 || core_id == 0x0000_1200
                                 || core_id == 0x0000_1100
+                                || core_id == 0x0000_1000
                             {
                                 let ep = regs.endpoint_out(epnum as usize);
                                 modify_reg!(endpoint_out, ep, DOEPCTL, CNAK: 1, EPENA: 1);
@@ -738,7 +814,8 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                                     .ok();
 
                                 // Re-enable the endpoint, F446-like chips only
-                                if core_id == 0x0000_2000
+                                if core_id == 0x4f54_400a
+                                    || core_id == 0x0000_2000
                                     || core_id == 0x0000_2100
                                     || core_id == 0x0000_2300
                                     || core_id == 0x0000_3000
