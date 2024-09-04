@@ -1,11 +1,7 @@
-[![crates.io](https://img.shields.io/crates/d/esp-synopsys-usb-otg.svg)](https://crates.io/crates/esp-synopsys-usb-otg)
-[![crates.io](https://img.shields.io/crates/v/esp-synopsys-usb-otg.svg)](https://crates.io/crates/esp-synopsys-usb-otg)
+[![crates.io](https://img.shields.io/crates/d/gd32-synopsys-usb-otg.svg)](https://crates.io/crates/gd32-synopsys-usb-otg)
+[![crates.io](https://img.shields.io/crates/v/gd32-synopsys-usb-otg.svg)](https://crates.io/crates/gd32-synopsys-usb-otg)
 
-# This is a fork of [synopsys-usb-otg](https://crates.io/crates/synopsys-usb-otg) with support for ESP32-Sx added - please use https://github.com/stm32-rs/synopsys-usb-otg when not targeting ESP32-Sx
-
-# this is a workaround package to allow GD32VFxxx and GD32C1x3 devices to have functional USB 
-
-and will be deprecated once the upstream [merges the relevant PR.](https://github.com/stm32-rs/synopsys-usb-otg/pull/25)
+# This is a fork of [synopsys-usb-otg](https://crates.io/crates/synopsys-usb-otg) with support for GD32VFxxx, GD32C1x3 and ESP32-Sx MCUs.
 
 # `synopsys-usb-otg`
 

@@ -645,7 +645,9 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                         // Full speed
 
                         #[cfg(feature = "esp32sx")]
-                        trdt = 0x05;
+                        {
+                            trdt = 0x05;
+                        }
 
                         #[cfg(not(feature = "esp32sx"))]
                         if core_id == 0x0000_1000 {
